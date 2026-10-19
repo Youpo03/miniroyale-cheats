@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Голос в текст</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #6b7280;
+    --border: #e3e6ea; --accent: #2563eb; --rec: #dc2626; --interim: #9ca3af;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #171a21; --text: #e6e8eb; --muted: #9aa1ab;
+      --border: #2a2f39; --accent: #60a5fa; --rec: #f87171; --interim: #6b7280;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px;
+  }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  button, select {
+    font: inherit; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text); padding: 10px 14px; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #recBtn {
+    background: var(--accent); color: #fff; border-color: transparent;
+    font-weight: 600; min-width: 170px; display: inline-flex; gap: 8px;
+    align-items: center; justify-content: center;
+  }
+  #recBtn.recording { background: var(--rec); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+  #recBtn.recording .dot { animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .2; } }
+  .status { color: var(--muted); font-size: .9rem; margin-left: auto; }
+  #transcript {
+    margin-top: 16px; min-height: 240px; padding: 14px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--bg);
+    white-space: pre-wrap; word-wrap: break-word; outline: none;
+  }
+  #transcript:empty::before { content: attr(data-placeholder); color: var(--muted); }
+  .interim { color: var(--interim); }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+  audio { width: 100%; margin-top: 16px; }
+  .warn {
+    margin-top: 16px; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--rec); color: var(--rec); display: none;
+  }
+  footer { color: var(--muted); font-size: .85rem; margin-top: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎙️ Голос в текст</h1>
+  <p class="sub">Нажмите «Начать запись» и говорите: текст появляется прямо во время речи.</p>
+
+  <div class="card">
+    <div class="controls">
+      <button id="recBtn"><span class="dot"></span><span id="recLabel">Начать запись</span></button>
+      <select id="lang" aria-label="Язык">
+        <option value="ru-RU">Русский</option>
+        <option value="uk-UA">Українська</option>
+        <option value="en-US">English (US)</option>
+        <option value="en-GB">English (UK)</option>
+        <option value="de-DE">Deutsch</option>
+        <option value="fr-FR">Français</option>
+        <option value="es-ES">Español</option>
+      </select>
+      <span class="status" id="status">Готово</span>
+    </div>
+
+    <div id="transcript" contenteditable="true" spellcheck="true"
+         data-placeholder="Здесь появится расшифровка… (текст можно редактировать)"></div>
+
+    <div class="actions">
+      <button id="copyBtn">Копировать</button>
+      <button id="saveBtn">Скачать .txt</button>
+      <button id="clearBtn">Очистить</button>
+    </div>
+
+    <audio id="player" controls hidden></audio>
+    <div class="actions">
+      <a id="audioDl" hidden><button>Скачать аудио</button></a>
+    </div>
+
+    <div class="warn" id="warn"></div>
+  </div>
+
+  <footer>
+    Распознавание работает через встроенный Web Speech API браузера
+    (лучше всего в Chrome, Edge и Safari). Аудио записывается локально и никуда не загружается.
+  </footer>
+</main>
+
+<script>
+(() => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const $ = id => document.getElementById(id);
+  const recBtn = $('recBtn'), recLabel = $('recLabel'), statusEl = $('status');
+  const out = $('transcript'), langSel = $('lang'), warn = $('warn');
+  const player = $('player'), audioDl = $('audioDl');
+
+  let recognition = null, recorder = null, stream = null, chunks = [];
+  let recording = false, finalText = '', interimSpan = null;
+
+  try { langSel.value = localStorage.getItem('stt-lang') || 'ru-RU'; } catch {}
+  langSel.onchange = () => { try { localStorage.setItem('stt-lang', langSel.value); } catch {} };
+
+  function showWarn(msg) { warn.textContent = msg; warn.style.display = 'block'; }
+  function setStatus(s) { statusEl.textContent = s; }
+
+  if (!SR) {
+    showWarn('Ваш браузер не поддерживает распознавание речи. Откройте страницу в Google Chrome, Microsoft Edge или Safari.');
+  }
+
+  function render(interim) {
+    // Keep user edits: rebuild only when we own the content
+    out.textContent = finalText;
+    if (interim) {
+      interimSpan = document.createElement('span');
+      interimSpan.className = 'interim';
+      interimSpan.textContent = interim;
+      out.appendChild(interimSpan);
+    }
+    out.scrollTop = out.scrollHeight;
+  }
+
+  function createRecognition() {
+    const r = new SR();
+    r.lang = langSel.value;
+    r.continuous = true;
+    r.interimResults = true;
+
+    r.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          const piece = t.trim();
+          if (piece) {
+            const sentence = piece.charAt(0).toUpperCase() + piece.slice(1);
+            finalText += (finalText && !/\s$/.test(finalText) ? ' ' : '') + sentence;
+            if (!/[.!?…]$/.test(finalText)) finalText += '.';
+          }
+        } else {
+          interim += t;
+        }
+      }
+      render(interim);
+    };
+
+    r.onerror = e => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      const msgs = {
+        'not-allowed': 'Доступ к микрофону запрещён. Разрешите его в настройках браузера.',
+        'service-not-allowed': 'Распознавание недоступно. Страница должна открываться по https или с localhost.',
+        'network': 'Ошибка сети: для распознавания нужен интернет.',
+        'audio-capture': 'Микрофон не найден.'
+      };
+      showWarn(msgs[e.error] || ('Ошибка распознавания: ' + e.error));
+      stop();
+    };
+
+    // Browsers end continuous sessions after silence: restart while recording
+    r.onend = () => { if (recording) { try { r.start(); } catch {} } };
+    return r;
+  }
+
+  async function start() {
+    warn.style.display = 'none';
+    finalText = out.textContent.trim();
+    if (finalText) finalText += '\n\n';
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      showWarn('Не удалось получить доступ к микрофону: ' + err.message);
+      return;
+    }
+
+    chunks = [];
+    if (window.MediaRecorder) {
+      recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        const url = URL.createObjectURL(blob);
+        player.src = url; player.hidden = false;
+        const ext = (blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm');
+        audioDl.href = url; audioDl.download = 'zapis-' + stamp() + '.' + ext; audioDl.hidden = false;
+      };
+      recorder.start();
+    }
+
+    if (SR) {
+      recognition = createRecognition();
+      try { recognition.start(); } catch {}
+    }
+
+    recording = true;
+    recBtn.classList.add('recording');
+    recLabel.textContent = 'Остановить';
+    langSel.disabled = true;
+    out.contentEditable = 'false';
+    setStatus('Идёт запись…');
+  }
+
+  function stop() {
+    recording = false;
+    if (recognition) { recognition.onend = null; try { recognition.stop(); } catch {} recognition = null; }
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    if (interimSpan) { interimSpan.remove(); interimSpan = null; }
+    recBtn.classList.remove('recording');
+    recLabel.textContent = 'Начать запись';
+    langSel.disabled = false;
+    out.contentEditable = 'true';
+    setStatus('Готово');
+  }
+
+  function stamp() {
+    return new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  }
+
+  recBtn.onclick = () => (recording ? stop() : start());
+
+  $('copyBtn').onclick = async () => {
+    try { await navigator.clipboard.writeText(out.innerText); setStatus('Скопировано'); }
+    catch { setStatus('Не удалось скопировать'); }
+  };
+  $('saveBtn').onclick = () => {
+    const blob = new Blob([out.innerText], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'tekst-' + stamp() + '.txt';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  $('clearBtn').onclick = () => { if (!recording) { out.textContent = ''; finalText = ''; } };
+})();
+</script>
+</body>
+</html>
