@@ -295,9 +295,6 @@ def main():
             continue
         spk = b["spk"]
         cfg = VOICES[spk]
-        if cfg["model"] not in voices:
-            voices[cfg["model"]] = PiperVoice.load(os.path.join(MODELS, cfg["model"] + ".onnx"), include_alignments=True)
-        voice = voices[cfg["model"]]
         syn = SynthesisConfig(length_scale=cfg["length"], noise_scale=cfg["noise"], noise_w_scale=cfg["noise_w"])
         tokens = caption_tokens(b["text"])
         speak = [(t[0], sum(1 for c in t[0] if c in V_TX)) for t in tokens if re.search(r"[А-Яа-яЁёA-Za-z]", t[0])]
@@ -312,6 +309,9 @@ def main():
             meta.append(m)
             print(f"{bi:3d} {spk:2s} (готовая озвучка) {m['text']}")
             continue
+        if cfg["model"] not in voices:
+            voices[cfg["model"]] = PiperVoice.load(os.path.join(MODELS, cfg["model"] + ".onnx"), include_alignments=True)
+        voice = voices[cfg["model"]]
         cpath = os.path.join(HERE, "build", EP, "voice_cache", key + ".pkl")
         os.makedirs(os.path.dirname(cpath), exist_ok=True)
         best = None
