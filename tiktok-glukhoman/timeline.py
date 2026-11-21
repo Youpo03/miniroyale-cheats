@@ -5,6 +5,8 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, HERE)
 import importlib  # noqa: E402
 

@@ -347,3 +347,129 @@ def finish(mx, total, ep, music_duck=0.45, amb_duck=0.3, gains=(1.0, 0.9, 0.85, 
     for k in mx.bus:
         print(k, "peak %.2f rms %.1f dB" % (np.max(np.abs(mx.bus[k])), dsp.rms_db(mx.bus[k][:n_total])))
     print("mix written", out.shape, "%.2fs" % (len(out) / SR))
+
+
+# ----------------------------------------------------------------- звуки для «Пугала»
+def crow_caw(dur=0.34, f0=540, seed=0):
+    rng = np.random.default_rng(seed)
+    n = int(dur * SR)
+    t = T(n)
+    f = f0 * (1 + 0.3 * np.exp(-t / 0.04)) * (1 - 0.18 * t / dur)
+    ph = 2 * np.pi * np.cumsum(f) / SR
+    saw = sum(np.sin(k * ph) / k for k in range(1, 18))
+    x = saw + 0.7 * rng.standard_normal(n)
+    y = dsp.resonator(x, 1150, 5) + 0.8 * dsp.resonator(x, 1950, 6) + 0.5 * dsp.resonator(x, 2900, 7)
+    env = (1 - np.exp(-t / 0.012)) * np.exp(-np.maximum(0, t - 0.17) / 0.06)
+    y = np.tanh(3 * dsp.normalize_peak(y, 1.0) * env)
+    return dsp.normalize_peak(dsp.hp(y, 300), 0.8)
+
+
+def crows(times_seed=0, n=2, gap=0.42):
+    out = np.zeros(int((n * gap + 0.6) * SR))
+    for k in range(n):
+        c = crow_caw(0.3 + 0.05 * k, 520 - 25 * k, seed=times_seed + k)
+        p = int(k * gap * SR)
+        out[p:p + len(c)] += c * (1 - 0.15 * k)
+    return out
+
+
+def birds(dur, seed=1, density=2.0):
+    rng = np.random.default_rng(seed)
+    n = int(dur * SR)
+    out = np.zeros((n, 2))
+    t = 0.0
+    while t < dur:
+        t += rng.exponential(1.0 / density)
+        f0, f1 = rng.uniform(2800, 4200), rng.uniform(3800, 6200)
+        pan = rng.uniform(-0.8, 0.8)
+        for k in range(rng.integers(2, 6)):
+            L = int(rng.uniform(0.04, 0.09) * SR)
+            tt = np.arange(L) / SR
+            f = np.linspace(f0, f1, L) * (1 + 0.04 * np.sin(2 * np.pi * 40 * tt))
+            ch = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.sin(np.pi * tt / tt[-1]) ** 2
+            p = int((t + k * rng.uniform(0.08, 0.14)) * SR)
+            if p + L < n:
+                out[p:p + L] += dsp.to_stereo(ch * rng.uniform(0.3, 1.0), pan)
+    return out / max(1e-9, np.max(np.abs(out))) * 0.5
+
+
+def straw_rustle(dur=0.35, seed=0):
+    rng = np.random.default_rng(seed)
+    n = int(dur * SR)
+    t = T(n)
+    x = dsp.bp(rng.standard_normal(n), 1800, 9000)
+    crack = np.zeros(n)
+    idx = rng.integers(0, n, int(dur * 220))
+    crack[idx] = rng.uniform(-1, 1, len(idx))
+    crack = dsp.bp(crack, 2500, 8000) * 3
+    env = np.sin(np.pi * np.clip(t / dur, 0, 1)) ** 0.7
+    return dsp.normalize_peak((0.5 * x + crack) * env, 0.5)
+
+
+def footstep_wood(seed=0):
+    y = knock(0.35, seed=seed, dull=0.8)
+    return dsp.lp(y, 900) * 0.8
+
+
+def rec_beep():
+    out = []
+    for f in (1200, 1600):
+        n = int(0.09 * SR)
+        t = T(n)
+        out.append(np.sin(2 * np.pi * f * t) * np.sin(np.pi * t / t[-1]) ** 0.5)
+        out.append(np.zeros(int(0.03 * SR)))
+    return dsp.normalize_peak(np.concatenate(out), 0.4)
+
+
+def tap_click():
+    n = int(0.06 * SR)
+    t = T(n)
+    y = 0.6 * np.sin(2 * np.pi * 900 * t) * np.exp(-t / 0.008) + 0.4 * dsp.hp(RNG.standard_normal(n), 3000) * np.exp(-t / 0.002)
+    return dsp.normalize_peak(y, 0.5)
+
+
+def glitch_noise(dur=0.3, seed=0):
+    rng = np.random.default_rng(seed)
+    n = int(dur * SR)
+    out = np.zeros(n)
+    p = 0
+    while p < n:
+        L = int(rng.uniform(0.01, 0.05) * SR)
+        kind = rng.integers(0, 3)
+        tt = np.arange(L) / SR
+        if kind == 0:
+            seg = np.sign(np.sin(2 * np.pi * rng.uniform(150, 2400) * tt))
+        elif kind == 1:
+            seg = rng.standard_normal(L)
+        else:
+            seg = np.zeros(L)
+        out[p:p + L] = seg[: max(0, min(L, n - p))] * rng.uniform(0.3, 1.0)
+        p += L
+    step = 6
+    out = np.repeat(out[::step], step)[:n]
+    return dsp.normalize_peak(out, 0.5)
+
+
+def camera_hiss(dur, seed=2):
+    rng = np.random.default_rng(seed)
+    n = int(dur * SR)
+    t = T(n)
+    hiss = dsp.hp(rng.standard_normal(n), 2500) * 0.6
+    hum = sum(np.sin(2 * np.pi * 50 * k * t) / k for k in (1, 3, 5)) * 0.15
+    return dsp.normalize_peak(hiss + hum, 0.5)
+
+
+def fast_forward(dur=2.0, seed=3):
+    rng = np.random.default_rng(seed)
+    n = int(dur * SR)
+    t = T(n)
+    f = 300 * 2 ** (t / dur * 3.5)
+    ph = 2 * np.pi * np.cumsum(f) / SR
+    whir = np.sin(ph) * 0.3 + dsp.bp(rng.standard_normal(n), 800, 5000) * 0.4
+    ticks = np.zeros(n)
+    rate = 6 + 40 * t / dur
+    idx = np.where(np.diff(np.floor(np.cumsum(rate) / SR)) > 0)[0]
+    ticks[idx] = 1.0
+    ticks = dsp.resonator(ticks, 3200, 20) * 0.6
+    env = np.clip(t / 0.15, 0, 1) * np.clip((dur - t) / 0.1, 0, 1)
+    return dsp.normalize_peak((whir + ticks) * env, 0.5)

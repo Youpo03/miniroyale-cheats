@@ -403,3 +403,190 @@ def stove_eyes(cv, open_k=1.0, t=0.0, look=0.0, finger=0.0):
         y0 = 70 - 40 * finger
         shape(cv, rrect(-4.5, y0 - 30, 9, 44, 4.5), "#8c7a6a", lw=Style.lw * 0.6, a=min(1, finger * 2))
         fill(cv, ellipse(0, y0 - 24, 3, 4), "#6f6156", min(1, finger * 2))
+
+
+# ================================================================== ПУГАЛО
+SC_SACK = "#b99b69"
+SC_SACK_SH = "#9a7d52"
+SC_COAT = "#3d4851"
+SC_COAT_LINE = "#56636e"
+SC_STRAW = "#dcbd5e"
+SC_HAT = "#4a3a2d"
+SC_FUR = "#6e5846"
+SC_PANTS = "#3a3a42"
+SC_POLE = "#7a5a3a"
+
+
+def straw(cv, x, y, ang, length, n=7, seed=0, spread=46):
+    import random as _r
+    r = _r.Random(seed)
+    w = 3.4
+    for i in range(n):
+        a = math.radians(ang + r.uniform(-spread / 2, spread / 2))
+        ln = length * r.uniform(0.55, 1.0)
+        x1, y1 = x + math.cos(a) * ln, y + math.sin(a) * ln
+        cv.drawLine(x, y, x1, y1, strokep(OUT, w + Style.lw * 1.2))
+    for i in range(n):
+        r2 = _r.Random(seed)
+        pass
+    r = _r.Random(seed)
+    for i in range(n):
+        a = math.radians(ang + r.uniform(-spread / 2, spread / 2))
+        ln = length * r.uniform(0.55, 1.0)
+        x1, y1 = x + math.cos(a) * ln, y + math.sin(a) * ln
+        cv.drawLine(x, y, x1, y1, strokep(SC_STRAW if i % 3 else "#c9a646", w))
+
+
+def _sack_head(cv, front=True, smile=0.0, t=0.0, squash=1.0):
+    cv.save()
+    cv.translate(0, -262)
+    cv.scale(squash, 1.0)
+    pts = []
+    for k in range(14):
+        a = math.radians(k * 360 / 14)
+        rr = 44 + 3.5 * math.sin(k * 2.7) + (4 if 3 <= k <= 5 else 0)
+        pts.append((rr * math.cos(a), rr * math.sin(a) * 1.04))
+    head = smooth(pts, t=0.45)
+    cv.drawPath(head, fillp(SC_SACK))
+    cv.save()
+    cv.clipPath(head, skia.ClipOp.kIntersect, True)
+    for i in range(-60, 61, 7):
+        cv.drawLine(i, -60, i + 10, 60, strokep(SC_SACK_SH, 1.4, 0.45))
+        cv.drawLine(-60, i, 60, i - 6, strokep(SC_SACK_SH, 1.4, 0.35))
+    cv.drawOval(skia.Rect.MakeLTRB(8, -40, 60, 50), fillp("#6d5636", 0.25, blur=10))
+    cv.restore()
+    stroke(cv, head, OUT)
+    if front:
+        # левый глаз — пуговица, правый — зашит крестом
+        shape(cv, circle(-16, -6, 10), "#18151a", lw=Style.lw * 0.8)
+        for (hx, hy) in ((-19, -9), (-13, -9), (-19, -3), (-13, -3)):
+            fill(cv, circle(hx, hy, 1.6), "#6a6670")
+        stroke(cv, line_path(-21, -11, -11, -1), "#d8d0b8", 1.6)
+        stroke(cv, line_path(-11, -11, -21, -1), "#d8d0b8", 1.6)
+        stroke(cv, line_path(10, -14, 25, 1), "#1a1410", Style.lw * 1.0)
+        stroke(cv, line_path(25, -14, 10, 1), "#1a1410", Style.lw * 1.0)
+        # зашитая улыбка
+        hw = 20 + 13 * smile
+        dep = 5 + 7 * smile
+        p = smooth([(-hw, 14 - 3 * smile), (-hw * 0.5, 14 + dep), (0, 15 + dep * 1.1), (hw * 0.5, 14 + dep), (hw, 14 - 3 * smile)], close=False)
+        stroke(cv, p, "#1a1410", Style.lw * 0.9)
+        n = int(6 + 5 * smile)
+        for k in range(n + 1):
+            u = k / n
+            xx = -hw + 2 * hw * u
+            yy = 14 - 3 * smile + (dep + 1) * math.sin(math.pi * u) * 1.05
+            stroke(cv, line_path(xx, yy - 5, xx, yy + 5), "#1a1410", Style.lw * 0.7)
+    else:
+        stroke(cv, line_path(2, -40, -2, 36), SC_SACK_SH, 2.0)
+    cv.restore()
+
+
+def _ushanka(cv, front=True):
+    crown = smooth([(-47, -282), (-44, -306), (-24, -322), (0, -326), (24, -322), (44, -306), (47, -282)], close=False, t=0.4)
+    crown.close()
+    shape(cv, crown, SC_HAT)
+    # уши шапки вниз
+    for sx in (-1, 1):
+        flap = smooth([(sx * 40, -290), (sx * 52, -286), (sx * 54, -258), (sx * 48, -244), (sx * 40, -250)], t=0.4)
+        shape(cv, flap, SC_FUR)
+        for k in range(3):
+            stroke(cv, arc_path(sx * 47, -278 + k * 10, 4, 3, 0, 180), "#4f3f31", Style.lw * 0.5)
+    band = smooth([(-52, -296), (-30, -301), (0, -303), (30, -301), (52, -296), (52, -280), (0, -276), (-52, -280)], t=0.3)
+    shape(cv, band, SC_FUR)
+    for k in range(9):
+        x = -44 + k * 11
+        stroke(cv, arc_path(x, -289, 5, 4, 200, 340), "#53412f", Style.lw * 0.55)
+    if front:
+        shape(cv, ellipse(0, -312, 7, 5), "#3a2d22", lw=Style.lw * 0.6)
+
+
+def scarecrow(cv, mode="pole", face="front", smile=0.0, t=0.0, walk=0.0, sway=0.0, squash=1.0):
+    """Пугало: origin — земля, высота ~326. mode: pole (на шесте, руки в стороны) | stand (стоит, руки висят)."""
+    if mode == "pole":
+        fill(cv, ellipse(0, 0, 34, 7), "#2e241c", 0.6)
+        shape(cv, rrect(-7, -126, 14, 128, 3), SC_POLE)
+        for k, x in enumerate((-40, -20, 0, 20, 40)):
+            straw(cv, x * 1.2, -102, 95 + x * 0.5, 30, n=5, seed=k)
+    else:
+        sw = math.sin(walk * 2 * math.pi)
+        for sx in (-1, 1):
+            fx = sx * 18 + sx * sw * 9
+            leg = poly([(sx * 6, -108), (sx * 30, -108), (fx + sx * 13, -12), (fx - sx * 11, -12)])
+            shape(cv, leg, SC_PANTS)
+            straw(cv, fx, -12, 90 + sx * 18, 26, n=6, seed=10 + sx)
+    cv.save()
+    cv.rotate(sway * 3)
+    # руки
+    if mode == "pole":
+        for sx in (-1, 1):
+            arm = rrect(min(sx * 46, sx * 152), -222, 106, 32, 14)
+            shape(cv, arm, SC_COAT)
+            for k in range(4):
+                xx = sx * (62 + k * 22)
+                stroke(cv, line_path(xx, -219, xx, -193), SC_COAT_LINE, 1.6)
+            straw(cv, sx * 150, -206, 0 if sx > 0 else 180, 34, n=8, seed=20 + sx)
+    else:
+        for sx in (-1, 1):
+            arm = poly([(sx * 40, -214), (sx * 64, -206), (sx * 74, -118), (sx * 50, -118)])
+            shape(cv, arm, SC_COAT)
+            straw(cv, sx * 62, -118, 90 + sx * 8, 40, n=8, seed=30 + sx)
+    # фуфайка
+    coat = smooth([(-50, -218), (50, -218), (60, -190), (66, -104), (30, -98), (0, -100), (-30, -98), (-66, -104), (-60, -190)], t=0.25)
+    shape(cv, coat, SC_COAT)
+    cv.save()
+    cv.clipPath(coat, skia.ClipOp.kIntersect, True)
+    for y in range(-206, -100, 15):
+        cv.drawLine(-70, y, 70, y + 2, strokep(SC_COAT_LINE, 1.8, 0.9))
+    cv.drawRect(skia.Rect.MakeXYWH(16, -170, 28, 26), fillp("#5b6650"))
+    stroke(cv, rect_path(16, -170, 28, 26), "#2b3226", 1.4)
+    cv.restore()
+    stroke(cv, line_path(0, -214, 0, -100), "#262d33", Style.lw * 0.8)
+    for y in (-196, -170, -144, -118):
+        fill(cv, circle(-6, y, 3.2), "#8a8478")
+    # солома из ворота, верёвка
+    for k, x in enumerate((-26, -12, 6, 22)):
+        straw(cv, x, -222, -90 + x, 22, n=4, seed=40 + k)
+    shape(cv, rrect(-26, -230, 52, 11, 5), "#8a6a40", lw=Style.lw * 0.7)
+    if face == "back":
+        straw(cv, 0, -226, 100, 24, n=5, seed=55)
+    # голова и шапка
+    _sack_head(cv, front=(face == "front"), smile=smile, t=t, squash=squash)
+    cv.save()
+    cv.translate(0, -262)
+    cv.scale(squash, 1.0)
+    cv.translate(0, 262)
+    _ushanka(cv, front=(face == "front"))
+    cv.restore()
+    cv.restore()
+
+
+def scarecrow_eyes_glow(cv, a=1.0):
+    """Отблеск пуговицы-глаза (для ночной съёмки), в тех же координатах, что scarecrow(face=front)."""
+    glow(cv, -16, -268, 22, "#ffffff", 0.7 * a)
+    fill(cv, circle(-16, -268, 4), "#ffffff", a)
+
+
+def rect_path(x, y, w, h):
+    p = skia.Path()
+    p.addRect(skia.Rect.MakeXYWH(x, y, w, h))
+    return p
+
+
+def boots(cv, t=0.0, straw_k=1.0):
+    """Резиновые сапоги в соломе (origin — пол между сапогами)."""
+    for k, (bx, tilt) in enumerate(((-58, -4), (52, 6))):
+        cv.save()
+        cv.translate(bx, 0)
+        cv.rotate(tilt)
+        boot = smooth([(-26, -150), (24, -150), (26, -40), (58, -26), (60, -2), (-30, -2), (-30, -40)], t=0.2)
+        shape(cv, boot, "#3c5a3e")
+        shape(cv, rrect(-30, -160, 58, 18, 7), "#2f4a31")
+        cv.drawRect(skia.Rect.MakeLTRB(-28, -12, 58, -2), fillp("#2a221c", 0.8))
+        fill(cv, ellipse(14, -20, 30, 6), "#5a4430", 0.7)
+        if straw_k > 0:
+            for j in range(4):
+                straw(cv, -20 + j * 13, -150, -90 + (j - 1.5) * 18, 34 * straw_k, n=4, seed=70 + k * 10 + j)
+            straw(cv, 40, -6, -20, 30 * straw_k, n=5, seed=90 + k)
+        cv.restore()
+    for j in range(6):
+        straw(cv, -110 + j * 45, 2, 180 + (j % 2) * 160 - 10, 26, n=3, seed=100 + j, spread=30)

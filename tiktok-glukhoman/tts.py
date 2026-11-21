@@ -11,6 +11,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import importlib  # noqa: E402
 import dsp  # noqa: E402
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 EP = sys.argv[1] if len(sys.argv) > 1 else "ep1"
 STORY = importlib.import_module(f"{EP}_story")
 BEATS = STORY.BEATS
@@ -239,8 +242,13 @@ def asr(y):
     return " ".join(s.text.strip() for s in segs)
 
 
+NUMS = {"1": "один", "2": "два", "3": "три", "4": "четыре", "5": "пять", "10": "десять", "12": "двенадцать",
+        "30": "тридцать"}
+
+
 def _norm(s):
     s = s.lower().replace("ё", "е").replace("*", "")
+    s = re.sub(r"\d+", lambda m: NUMS.get(m.group(0), m.group(0)), s)
     s = re.sub(r"[^а-яa-z0-9 ]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
@@ -257,9 +265,31 @@ def cer(ref, hyp):
     return d[len(b)] / max(1, len(a))
 
 
+def line_key(spk, text):
+    import hashlib
+    cfg = VOICES[spk]
+    fixes = PRON_FIX + list(getattr(STORY, "PRON_FIX", []))
+    return hashlib.md5(json.dumps([spk, text, cfg, MAX_PAUSE[spk], fixes], ensure_ascii=False).encode()).hexdigest()[:12]
+
+
+def load_previous():
+    """Уже готовая и проверенная озвучка из прошлой сборки: переиспользуем, если текст и настройки не менялись."""
+    path = os.path.join(HERE, "build", EP, "voice_meta.json")
+    reuse, audio = {}, {}
+    if os.path.exists(path) and "--fresh" not in sys.argv:
+        with open(path, encoding="utf-8") as f:
+            for m in json.load(f):
+                npy = os.path.join(OUT, f"{m['beat']:03d}.npy")
+                if m.get("key") and os.path.exists(npy):
+                    reuse[m["key"]] = m
+                    audio[m["beat"]] = np.load(npy).astype(np.float64)
+    return reuse, audio
+
+
 def main():
     voices = {}
     meta = []
+    reuse, reuse_audio = load_previous()
     for bi, b in enumerate(BEATS):
         if b["kind"] != "line":
             continue
@@ -272,7 +302,16 @@ def main():
         tokens = caption_tokens(b["text"])
         speak = [(t[0], sum(1 for c in t[0] if c in V_TX)) for t in tokens if re.search(r"[А-Яа-яЁёA-Za-z]", t[0])]
         import hashlib, pickle
-        key = hashlib.md5(json.dumps([spk, b["text"], cfg, MAX_PAUSE[spk], PRON_FIX], ensure_ascii=False).encode()).hexdigest()[:12]
+        key = line_key(spk, b["text"])
+        if key in reuse:
+            m = dict(reuse[key])
+            y = reuse_audio[m["beat"]]
+            m["beat"] = bi
+            np.save(os.path.join(OUT, f"{bi:03d}.npy"), y.astype(np.float32))
+            dsp.write_wav(os.path.join(OUT, f"{bi:03d}_{spk}.wav"), y)
+            meta.append(m)
+            print(f"{bi:3d} {spk:2s} (готовая озвучка) {m['text']}")
+            continue
         cpath = os.path.join(HERE, "build", EP, "voice_cache", key + ".pkl")
         os.makedirs(os.path.dirname(cpath), exist_ok=True)
         best = None
@@ -338,7 +377,7 @@ def main():
         env = [round(min(1.0, v / m * 1.3), 3) for v in env]
         np.save(os.path.join(OUT, f"{bi:03d}.npy"), y.astype(np.float32))
         dsp.write_wav(os.path.join(OUT, f"{bi:03d}_{spk}.wav"), y)
-        meta.append(dict(beat=bi, spk=spk, text=b["text"], asr=heard, asr_err=round(err, 3), dur=dur, speech_dur=speech_dur, words=words, env=env, pan=cfg["pan"]))
+        meta.append(dict(beat=bi, key=key, spk=spk, text=b["text"], asr=heard, asr_err=round(err, 3), dur=dur, speech_dur=speech_dur, words=words, env=env, pan=cfg["pan"]))
         print(f"{bi:3d} {spk:2s} {speech_dur:5.2f}s  " + " ".join(f"{w['w']}[{w['s']:.2f}-{w['e']:.2f}]" for w in words))
     with open(os.path.join(HERE, "build", EP, "voice_meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
